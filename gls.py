@@ -1,172 +1,118 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# Graphical List Directory contents command
-# Author: Albert Puente Encinas
-# Version: 0.2
+import math
+import sys
+from datetime import datetime
+from pathlib import Path
+from stat import filemode
 
-# Hint: chmod +x gls.py && alias gls=$PWD/gls.py
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.traceback import Traceback
+from textual import events
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import var
+from textual.widgets import Button, DirectoryTree, Footer, Header, Static
 
-from __future__ import division
-import os, sys, time, re
-from math import ceil
-import subprocess # less x.pdf
 
-# Initial definitions
+def sizeof_fmt(num, suffix='B'):
+    magnitude = int(math.floor(math.log(num, 1024)))
+    val = num / math.pow(1024, magnitude)
+    if magnitude > 7:
+        return '{:.1f}{}{}'.format(val, 'Yi', suffix)
+    return '{:3.1f}{}{}'.format(val, ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi'][magnitude], suffix)
 
-nLines = 6
-elem_cols = None
 
-try:
-    if len(sys.argv) > 1: nLines = max(0, int(sys.argv[1]))    
-    if len(sys.argv) > 2: elem_cols = max(1, int(sys.argv[2]))
-except ValueError:
-    print "Uknown parameter"
-    sys.exit()
-        
-DEFAULT_WIDTH = 36
-HEIGHT = 4 + nLines
+class GLS(App):
+    """Textual code browser app."""
 
-getConsoleSize = lambda: [int(x) for x in os.popen('stty size', 'r').read().split()]    
-def disp(c): sys.stdout.write(c)
+    CSS_PATH = "browser.css"
+    BINDINGS = [
+        ("f", "toggle_files", "Toggle Files"),
+        # ("d", "toggle_dark", "Toggle Dark Mode"),
+        # ("e", "edit", "Edit"),
+        # ("d", "delete", "Delete"),
+        ("q", "quit", "Quit"),
+    ]
 
-rows, cols = getConsoleSize()
+    show_tree = var(True)
 
-if cols < 30:
-    print 'Console size is too small (' + str(cols) + 'x' + str(rows) + ')'
-    sys.exit()
+    def watch_show_tree(self, show_tree: bool) -> None:
+        """Called when show_tree is modified."""
+        self.set_class(show_tree, "-show-tree")
 
-fileNames = sorted(os.listdir(os.getcwd()))
+    def compose(self) -> ComposeResult:
+        """Compose our UI."""
+        path = "./" if len(sys.argv) < 2 else sys.argv[1]
+        yield Header(show_clock=True)
+        yield Container(
+            DirectoryTree(path, id="tree-view"),
+            Vertical(Static(id="code", expand=True), id="code-view"),
+            Horizontal(
+                Static(
+                    id="info",
+                    expand=True,
+                    renderable=Text.assemble(
+                        ("Select a file to see its contents", "bold #0078D4"))
+                ),
+                id="info-view"
+            ),
+        )
+        yield Footer()
 
-# Format
-if not elem_cols: # The user has not specified the desired number of cols
-    elem_cols = int(cols/DEFAULT_WIDTH)
-elem_width = int(cols/elem_cols)
-elem_rows = int(ceil(len(fileNames)/elem_cols))
-elem_height = HEIGHT
+    def on_mount(self, event: events.Mount) -> None:
+        self.query_one(DirectoryTree).focus()
 
-rows = elem_rows * elem_height
-
-BUFF = [[' ' for _ in range(cols)] for _ in range(rows)] # To be printed
-
-# Functions
-def square(x1, x2, y1, y2, border = 'other'):    
-    if border == 'file':     box = u'┌└┐┘─│'
-    elif border == 'folder': box = u'╔╚╗╝═║'
-    else:                    box = u'┏┗┓┛━┃'    
-    BUFF[y1][x1] = box[0]; BUFF[y2][x1] = box[1]
-    BUFF[y1][x2] = box[2]; BUFF[y2][x2] = box[3]
-    for i in range(x1+1, x2): BUFF[y1][i] = BUFF[y2][i] = box[4]
-    for i in range(y1+1, y2): BUFF[i][x1] = BUFF[i][x2] = box[5]
-    
-def insertWord(x1, y1, s):    
-    for i in range(len(s)):
-        BUFF[y1][x1+i] = s[i]        
-
-# Run
-colours = dict()
-
-sizeLabels = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB']
-printableExts = ['.cpp', '.py', '.h', '.txt', '.c', '.md', '.pyx']
-
-elem_col = 0
-elem_row = 0
-for fileName in fileNames:
-    fullName = os.getcwd() + '/'+ fileName
-    _, file_extension = os.path.splitext(fullName)
-    size = float(os.path.getsize(fullName))
-    sizeOrder = 0
-    while size > 1024:
-        size /= 1024
-        sizeOrder += 1
-    sizeText = '(' + '{0:.2f}'.format(round(size,2)) + ' ' + sizeLabels[sizeOrder]  + ')'
-    
-    x1 = elem_col*elem_width
-    x2 = x1 + elem_width - 1    
-    y1 = elem_row*elem_height
-    y2 = y1 + elem_height - 1
-    if os.path.isdir(fileName):
-        square(x1, x2, y1, y2, 'folder')
-        colours[(y1, x1+1)] = "\033[1;34;10m"
-        insertWord(x1+1, y2, 'FOLDER')        
+    def on_directory_tree_file_selected(
+        self, event: DirectoryTree.FileSelected
+    ) -> None:
+        """Called when the user click a file in the directory tree."""
+        event.stop()
+        code_view = self.query_one("#code", Static)
         try:
-            subNames = sorted(os.listdir(fullName))
-        except:
-            subNames = []
-        l = 0
-        subNames = subNames[:elem_height-4]
-        for line in subNames:
-            if len(line) > elem_width - 5:
-                line = line[:elem_width-7]+'...'
-            insertWord(x1+2, y1 + l + 2, line)
-            colours[(y1+ l + 2, x1+2)] = "\033[0;32;10m"
-            colours[(y1+ l + 2, x1+2 + len(line))] = "\033[0;0;0m"
-            l += 1
-        
-    elif os.path.isfile(fullName) and os.access(fullName, os.X_OK) and file_extension == '':
-        colours[(y1, x1+1)] = "\033[1;31;10m"
-        square(x1, x2, y1, y2)
-        insertWord(x1+1, y2, 'EXE')
-        insertWord(x1+2, y1 + 2, "Last  modified:")
-        insertWord(x1+2, y1 + 3, str(time.ctime(os.path.getmtime(fullName))))
-        # insertWord(x1+2, y1 + 5, "Created:")
-        # insertWord(x1+2, y1 + 6, str(time.ctime(os.path.getctime(fullName)))) 
-    else:
-        colours[(y1, x1+1)] = "\033[1;32;10m"
-        square(x1, x2, y1, y2, 'file')    
-        modTime = filter(None, time.ctime(os.path.getmtime(fullName)).split(' '))
-        insertWord(x1+1, y2, '('+modTime[2]+'/'+modTime[1]+'/'+modTime[4]+' '+modTime[3]+')')
-
-    # Contents
-    if file_extension in printableExts:
-        head = list()
-        with open(fileName) as f:
-            n = 0
-            while n < elem_height - 4:
-                try:
-                    head.append(next(f))
-                except StopIteration:
-                    break
-                n += 1
-        l = 0
-        for line in head:
-            if len(line) > elem_width - 5:
-                line = line[:elem_width-7]+'...'
-            insertWord(x1+2, y1 + l + 2, line)
-            colours[(y1+ l + 2, x1+2)] = "\033[0;36;10m"
-            colours[(y1+ l + 2, x1+2 + len(line))] = "\033[0;0;0m"
-            l += 1
-    elif file_extension == '.pdf':
-        output = subprocess.Popen(["less", fileName], stdout=subprocess.PIPE).communicate()[0]
-        l = 0
-        output = output.split('\n')
-        output = output[:elem_height - 4]
-        for line in output:
-            if len(line) > elem_width - 5:
-                line = line[:elem_width-7]+'...'
-            insertWord(x1+2, y1 + l + 2, ''.join(c for c in line if c.isalnum() or c == ' '))
-            colours[(y1+ l + 2, x1+2)] = "\033[0;33;10m"
-            colours[(y1+ l + 2, x1+2 + len(line))] = "\033[0;0;0m"
-            l += 1
-    
-    if len(fileName) > elem_width-3:
-        fileName = fileName[:elem_width-5] + '...'
-        
-    insertWord(x1+1, y1, fileName)    
-    colours[(y1, x1+len(fileName)+1)] = "\033[0;0;0m"    
-    insertWord(x2-len(sizeText), y2, sizeText)
-    # Next
-    elem_col += 1
-    if elem_col == elem_cols:
-        elem_col = 0
-        elem_row += 1
-
-# Display
-for r in range(rows):
-    for c in range(cols):
-        if (r,c) in colours:
-            disp(colours[(r,c)])
-        if BUFF[r][c] in ['\n', '\t']:
-            disp(' ')
+            syntax = Syntax.from_path(
+                event.path,
+                line_numbers=True,
+                word_wrap=False,
+                indent_guides=True,
+                # theme="github-dark",
+            )
+        except Exception:
+            # code_view.update(Traceback(theme="github-dark", width=None))
+            code_view.update("Cannot display this file")
+            self.sub_title = "ERROR"
         else:
-            disp(BUFF[r][c])
+            code_view.update(syntax)
+            self.query_one("#code-view").scroll_home(animate=False)
+            self.sub_title = event.path
+
+        # Info view
+        status = Path(event.path).stat()
+        info_view = self.query_one("#info", Static)
+        mod_date = datetime.utcfromtimestamp(
+            status.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        label_style = "bold #0078D4"
+        info_view.update(
+            Text.assemble(
+                ("Size: ", label_style),
+                f"{sizeof_fmt(status.st_size)} ",
+                ("Perms: ", label_style),
+                f"{filemode(status.st_mode)} ",
+                ("Modified: ", label_style),
+                f"{mod_date}"
+            )
+        )
+
+    def action_toggle_files(self) -> None:
+        """Called in response to key binding."""
+        self.show_tree = not self.show_tree
+
+    # def action_toggle_dark(self) -> None:
+    #     """An action to toggle dark mode."""
+    #     self.dark = not self.dark
+
+
+if __name__ == "__main__":
+    GLS().run()

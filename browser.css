@@ -1,0 +1,47 @@
+Screen {
+    background: $background;
+}
+
+#tree-view {
+    display: none;
+    scrollbar-gutter: stable;
+    overflow: auto;
+    width: auto;
+    height: 100%;
+    dock: left;
+    background: $surface;
+}
+
+GLS.-show-tree #tree-view {
+    display: block;
+    max-width: 50%;
+}
+
+
+#code-view {
+    overflow: auto scroll;
+    min-width: 100%;
+}
+#code {
+    width: auto;
+}
+
+#info-view {
+    background: $surface;
+    height: 1;
+    padding-left: 1;
+}
+
+Widget {
+    scrollbar-background: $background;
+    scrollbar-background-hover: $background;
+    scrollbar-color: $primary;
+    scrollbar-color-active: $accent;
+    scrollbar-corner-color: $primary;
+    scrollbar-size-vertical: 2;
+    scrollbar-size-horizontal: 1;
+}
+
+DirectoryTree > .tree--guides {
+    color: $accent;
+}
